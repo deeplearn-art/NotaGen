@@ -32,6 +32,8 @@
 
 We recommend [EasyABC](https://sourceforge.net/projects/easyabc/), a nice software for ABC Notation previewing, composing and editing.
 
+It's needed to add a line "X:1" before each piece to present the score image in EasyABC :D
+
 ### Convert to MusicXML
 
 - Go to the data folder ```cd data/```
