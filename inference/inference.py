@@ -1,4 +1,3 @@
-
 import os
 import time
 import torch
@@ -161,6 +160,8 @@ def inference_patch(prompt_lines=[], pieces=NUM_SAMPLES):
 
         tunebody_flag = False
         while True:
+            print(f"\nGenerating with parameters: TOP_K={TOP_K}, TOP_P={TOP_P}, TEMPERATURE={TEMPERATURE}")
+            
             predicted_patch = model.generate(input_patches.unsqueeze(0),
                                              top_k=TOP_K,
                                              top_p=TOP_P,
