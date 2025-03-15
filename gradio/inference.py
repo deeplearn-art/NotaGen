@@ -1,4 +1,3 @@
-
 import os
 import time
 import torch
@@ -131,7 +130,7 @@ def rest_unreduce(abc_lines):
     return unreduced_lines
 
 
-def inference_patch(period, composer, instrumentation):
+def inference_patch(period, composer, instrumentation, top_k=TOP_K, top_p=TOP_P, temperature=TEMPERATURE):
 
     prompt_lines=[
         '%' + period + '\n',
@@ -163,17 +162,17 @@ def inference_patch(period, composer, instrumentation):
 
         while True:
             predicted_patch = model.generate(input_patches.unsqueeze(0),
-                                                top_k=TOP_K,
-                                                top_p=TOP_P,
-                                                temperature=TEMPERATURE)
+                                                top_k=top_k,
+                                                top_p=top_p,
+                                                temperature=temperature)
             if not tunebody_flag and patchilizer.decode([predicted_patch]).startswith('[r:'):  # start with [r:0/
                 tunebody_flag = True
                 r0_patch = torch.tensor([ord(c) for c in '[r:0/']).unsqueeze(0).to(device)
                 temp_input_patches = torch.concat([input_patches, r0_patch], axis=-1)
                 predicted_patch = model.generate(temp_input_patches.unsqueeze(0),
-                                                    top_k=TOP_K,
-                                                    top_p=TOP_P,
-                                                    temperature=TEMPERATURE)
+                                                    top_k=top_k,
+                                                    top_p=top_p,
+                                                    temperature=temperature)
                 predicted_patch = [ord(c) for c in '[r:0/'] + predicted_patch
             if predicted_patch[0] == patchilizer.bos_token_id and predicted_patch[1] == patchilizer.eos_token_id:
                 end_flag = True
