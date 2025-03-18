@@ -192,7 +192,6 @@ def inference_patch(period, composer, instrumentation, initial_abc="", top_k=TOP
             tunebody_flag = True
 
         while True:
-            print(f"\nGenerating with parameters: TOP_K={top_k}, TOP_P={top_p}, TEMPERATURE={temperature}")
             predicted_patch = model.generate(input_patches.unsqueeze(0),
                                             top_k=top_k,
                                             top_p=top_p,
