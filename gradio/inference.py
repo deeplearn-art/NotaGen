@@ -130,21 +130,45 @@ def rest_unreduce(abc_lines):
     return unreduced_lines
 
 
-def inference_patch(period, composer, instrumentation, top_k=TOP_K, top_p=TOP_P, temperature=TEMPERATURE):
-
-    prompt_lines=[
+def inference_patch(period, composer, instrumentation, initial_abc="", top_k=TOP_K, top_p=TOP_P, temperature=TEMPERATURE):
+    # Create metadata lines
+    metadata_lines = [
         '%' + period + '\n',
         '%' + composer + '\n',
-        '%' + instrumentation + '\n']
-
-    while True:
-
-        failure_flag = False
-
+        '%' + instrumentation + '\n'
+    ]
+    
+    # Process initial ABC if provided
+    if initial_abc.strip():
+        # Get existing metadata from initial_abc if present
+        abc_lines = initial_abc.strip().split('\n')
+        has_metadata = any(line.startswith('%') for line in abc_lines)
+        
+        if not has_metadata:
+            # Add required metadata if not present
+            initial_abc = ''.join(metadata_lines) + initial_abc
+        
+        # Skip metadata generation as we'll use the initial_abc directly
+        byte_list = list(initial_abc)
+        prompt_patches = patchilizer.encode_generate(initial_abc)
+        
+        # Flatten the patches
+        prompt_patches = [item for sublist in prompt_patches for item in sublist]
+        
+        # Add beginning of sequence token if not present
+        if prompt_patches[0] != patchilizer.bos_token_id:
+            bos_patch = [patchilizer.bos_token_id] * (PATCH_SIZE - 1) + [patchilizer.eos_token_id]
+            prompt_patches = bos_patch + prompt_patches
+        
+        # Convert to tensor
+        input_patches = torch.tensor([prompt_patches], device=device)
+        
+        # Print the initial state
+        print(initial_abc, end='')
+    else:
+        # Use standard metadata-only initialization
+        prompt_lines = metadata_lines
         bos_patch = [patchilizer.bos_token_id] * (PATCH_SIZE - 1) + [patchilizer.eos_token_id]
-
-        start_time = time.time()
-
         prompt_patches = patchilizer.patchilize_metadata(prompt_lines)
         byte_list = list(''.join(prompt_lines))
         print(''.join(byte_list), end='')
@@ -152,27 +176,34 @@ def inference_patch(period, composer, instrumentation, top_k=TOP_K, top_p=TOP_P,
         prompt_patches = [[ord(c) for c in patch] + [patchilizer.special_token_id] * (PATCH_SIZE - len(patch)) for patch
                             in prompt_patches]
         prompt_patches.insert(0, bos_patch)
-
         input_patches = torch.tensor(prompt_patches, device=device).reshape(1, -1)
 
+    while True:
+        failure_flag = False
         end_flag = False
         cut_index = None
-
         tunebody_flag = False
 
+        # Check if tunebody_flag should be initialized as True based on initial ABC
+        if initial_abc.strip() and '[r:' in initial_abc:
+            tunebody_flag = True
+
         while True:
+            print(f"\nGenerating with parameters: TOP_K={top_k}, TOP_P={top_p}, TEMPERATURE={temperature}")
             predicted_patch = model.generate(input_patches.unsqueeze(0),
-                                                top_k=top_k,
-                                                top_p=top_p,
-                                                temperature=temperature)
+                                            top_k=top_k,
+                                            top_p=top_p,
+                                            temperature=temperature)
+            
+            # Rest of the generation logic remains the same
             if not tunebody_flag and patchilizer.decode([predicted_patch]).startswith('[r:'):  # start with [r:0/
                 tunebody_flag = True
                 r0_patch = torch.tensor([ord(c) for c in '[r:0/']).unsqueeze(0).to(device)
                 temp_input_patches = torch.concat([input_patches, r0_patch], axis=-1)
                 predicted_patch = model.generate(temp_input_patches.unsqueeze(0),
-                                                    top_k=top_k,
-                                                    top_p=top_p,
-                                                    temperature=temperature)
+                                                top_k=top_k,
+                                                top_p=top_p,
+                                                temperature=temperature)
                 predicted_patch = [ord(c) for c in '[r:0/'] + predicted_patch
             if predicted_patch[0] == patchilizer.bos_token_id and predicted_patch[1] == patchilizer.eos_token_id:
                 end_flag = True
