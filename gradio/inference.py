@@ -131,6 +131,9 @@ def rest_unreduce(abc_lines):
 
 
 def inference_patch(period, composer, instrumentation, initial_abc="", top_k=TOP_K, top_p=TOP_P, temperature=TEMPERATURE):
+    # Add start time at the beginning
+    start_time = time.time()
+    
     # Create metadata lines
     metadata_lines = [
         '%' + period + '\n',
