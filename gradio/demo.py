@@ -84,7 +84,7 @@ def save_and_convert(abc_content, period, composer, instrumentation):
 
 
 
-def generate_music(period, composer, instrumentation, top_k, top_p, temperature):
+def generate_music(period, composer, instrumentation, initial_abc, top_k, top_p, temperature):
     if (period, composer, instrumentation) not in valid_combinations:
         raise gr.Error("Invalid prompt combination! Please re-select from the period options")
     
@@ -96,6 +96,7 @@ def generate_music(period, composer, instrumentation, top_k, top_p, temperature)
     def run_inference():
         try:
             result_container.append(inference_patch(period, composer, instrumentation, 
+                                                   initial_abc=initial_abc,
                                                    top_k=top_k, top_p=top_p, temperature=temperature))
         finally:
             sys.stdout = original_stdout
@@ -143,6 +144,12 @@ with gr.Blocks() as demo:
                 value=None,
                 label="Instrumentation",
                 interactive=False
+            )
+            
+            initial_abc = gr.Textbox(
+                label="Initial ABC Notation (optional)",
+                placeholder="Paste ABC notation here to continue from. Leave empty to generate from scratch.",
+                lines=5
             )
             
             top_k = gr.Slider(minimum=1, maximum=20, value=9, step=1, 
@@ -196,7 +203,7 @@ with gr.Blocks() as demo:
     
     generate_btn.click(
         generate_music,
-        inputs=[period_dd, composer_dd, instrument_dd, top_k, top_p, temperature],
+        inputs=[period_dd, composer_dd, instrument_dd, initial_abc, top_k, top_p, temperature],
         outputs=[process_output, final_output]
     )
     
