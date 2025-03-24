@@ -40,96 +40,6 @@ model = model.to(device)
 model.eval()
 
 
-def rest_unreduce(abc_lines):
-
-    tunebody_index = None
-    for i in range(len(abc_lines)):
-        if '[V:' in abc_lines[i]:
-            tunebody_index = i
-            break
-
-    metadata_lines = abc_lines[: tunebody_index]
-    tunebody_lines = abc_lines[tunebody_index:]
-
-    part_symbol_list = []
-    voice_group_list = []
-    for line in metadata_lines:
-        if line.startswith('%%score'):
-            for round_bracket_match in re.findall(r'\((.*?)\)', line):
-                voice_group_list.append(round_bracket_match.split())
-            existed_voices = [item for sublist in voice_group_list for item in sublist]
-        if line.startswith('V:'):
-            symbol = line.split()[0]
-            part_symbol_list.append(symbol)
-            if symbol[2:] not in existed_voices:
-                voice_group_list.append([symbol[2:]])
-    z_symbol_list = []  # voices that use z as rest
-    x_symbol_list = []  # voices that use x as rest
-    for voice_group in voice_group_list:
-        z_symbol_list.append('V:' + voice_group[0])
-        for j in range(1, len(voice_group)):
-            x_symbol_list.append('V:' + voice_group[j])
-
-    part_symbol_list.sort(key=lambda x: int(x[2:]))
-
-    unreduced_tunebody_lines = []
-
-    for i, line in enumerate(tunebody_lines):
-        unreduced_line = ''
-
-        line = re.sub(r'^\[r:[^\]]*\]', '', line)
-
-        pattern = r'\[V:(\d+)\](.*?)(?=\[V:|$)'
-        matches = re.findall(pattern, line)
-
-        line_bar_dict = {}
-        for match in matches:
-            key = f'V:{match[0]}'
-            value = match[1]
-            line_bar_dict[key] = value
-
-        # calculate duration and collect barline
-        dur_dict = {}  
-        for symbol, bartext in line_bar_dict.items():
-            right_barline = ''.join(re.split(Barline_regexPattern, bartext)[-2:])
-            bartext = bartext[:-len(right_barline)]
-            try:
-                bar_dur = calculate_bartext_duration(bartext)
-            except:
-                bar_dur = None
-            if bar_dur is not None:
-                if bar_dur not in dur_dict.keys():
-                    dur_dict[bar_dur] = 1
-                else:
-                    dur_dict[bar_dur] += 1
-
-        try:
-            ref_dur = max(dur_dict, key=dur_dict.get)
-        except:
-            pass    # use last ref_dur
-
-        if i == 0:
-            prefix_left_barline = line.split('[V:')[0]
-        else:
-            prefix_left_barline = ''
-
-        for symbol in part_symbol_list:
-            if symbol in line_bar_dict.keys():
-                symbol_bartext = line_bar_dict[symbol]
-            else:
-                if symbol in z_symbol_list:
-                    symbol_bartext = prefix_left_barline + 'z' + str(ref_dur) + right_barline
-                elif symbol in x_symbol_list:
-                    symbol_bartext = prefix_left_barline + 'x' + str(ref_dur) + right_barline
-            unreduced_line += '[' + symbol + ']' + symbol_bartext
-
-        unreduced_tunebody_lines.append(unreduced_line + '\n')
-
-    unreduced_lines = metadata_lines + unreduced_tunebody_lines
-
-    return unreduced_lines
-
-
 def inference_patch(period, composer, instrumentation, initial_abc="", top_k=TOP_K, top_p=TOP_P, temperature=TEMPERATURE):
     # Add start time at the beginning
     start_time = time.time()
@@ -148,7 +58,7 @@ def inference_patch(period, composer, instrumentation, initial_abc="", top_k=TOP
         has_metadata = any(line.startswith('%') for line in abc_lines)
         
         if not has_metadata:
-            # Add required metadata if not present
+            # Add required metadata if not present 
             initial_abc = ''.join(metadata_lines) + initial_abc
         
         # Skip metadata generation as we'll use the initial_abc directly
@@ -181,23 +91,44 @@ def inference_patch(period, composer, instrumentation, initial_abc="", top_k=TOP
         prompt_patches.insert(0, bos_patch)
         input_patches = torch.tensor(prompt_patches, device=device).reshape(1, -1)
 
-    while True:
+    # Flag to track if we're continuing from initial_abc
+    is_continuation = bool(initial_abc.strip())
+    # Flag to track if we've found the target line
+    found_target_line = False
+
+    while True:  # Main retry loop
         failure_flag = False
         end_flag = False
         cut_index = None
         tunebody_flag = False
 
-        # Check if tunebody_flag should be initialized as True based on initial ABC
         if initial_abc.strip() and '[r:' in initial_abc:
             tunebody_flag = True
 
-        while True:
-            predicted_patch = model.generate(input_patches.unsqueeze(0),
-                                            top_k=top_k,
-                                            top_p=top_p,
-                                            temperature=temperature)
-            
-            # Rest of the generation logic remains the same
+        while True:  # Generation loop
+            predicted_patch = model.generate(
+                input_patches.unsqueeze(0),
+                top_k=top_k,
+                top_p=top_p,
+                temperature=temperature
+            )
+
+            # Check for forced stop condition in continuation case
+            if is_continuation:
+                next_patch = patchilizer.decode([predicted_patch])
+                current_text = ''.join(byte_list) + next_patch
+                
+                # Split into lines and check the last few lines
+                lines = current_text.split('\n')
+                for line in lines[-3:]:  # Check last few lines to ensure we don't miss it
+                    if line.startswith('[r:0/'):
+                        print("\nFound target line [r:0/], stopping generation...")
+                        end_flag = True
+                        break
+                
+                if end_flag:
+                    break
+
             if not tunebody_flag and patchilizer.decode([predicted_patch]).startswith('[r:'):  # start with [r:0/
                 tunebody_flag = True
                 r0_patch = torch.tensor([ord(c) for c in '[r:0/']).unsqueeze(0).to(device)
@@ -210,8 +141,9 @@ def inference_patch(period, composer, instrumentation, initial_abc="", top_k=TOP
             if predicted_patch[0] == patchilizer.bos_token_id and predicted_patch[1] == patchilizer.eos_token_id:
                 end_flag = True
                 break
-            next_patch = patchilizer.decode([predicted_patch])
 
+            # Add generated content to byte_list
+            next_patch = patchilizer.decode([predicted_patch])
             for char in next_patch:
                 byte_list.append(char)
                 print(char, end='')
@@ -266,13 +198,24 @@ def inference_patch(period, composer, instrumentation, initial_abc="", top_k=TOP
                 input_patches = torch.tensor([input_patches], device=device)
                 input_patches = input_patches.reshape(1, -1)
 
+        # Post-processing
         if not failure_flag:
             abc_text = ''.join(byte_list)
+            
+            # If we're continuing and haven't found [r:0/, trim to the last complete line
+            if is_continuation and not end_flag:
+                lines = abc_text.split('\n')
+                for i in range(len(lines) - 1, -1, -1):
+                    if lines[i].startswith('[r:0/'):
+                        # Keep everything up to and including this line
+                        abc_text = '\n'.join(lines[:i+1])
+                        break
 
-            # unreduce
+            # Convert to ABC notation lines
             abc_lines = abc_text.split('\n')
             abc_lines = list(filter(None, abc_lines))
             abc_lines = [line + '\n' for line in abc_lines]
+
             try:
                 unreduced_abc_lines = rest_unreduce(abc_lines)
             except:
