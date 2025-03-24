@@ -40,6 +40,96 @@ model = model.to(device)
 model.eval()
 
 
+def rest_unreduce(abc_lines):
+
+    tunebody_index = None
+    for i in range(len(abc_lines)):
+        if '[V:' in abc_lines[i]:
+            tunebody_index = i
+            break
+
+    metadata_lines = abc_lines[: tunebody_index]
+    tunebody_lines = abc_lines[tunebody_index:]
+
+    part_symbol_list = []
+    voice_group_list = []
+    for line in metadata_lines:
+        if line.startswith('%%score'):
+            for round_bracket_match in re.findall(r'\((.*?)\)', line):
+                voice_group_list.append(round_bracket_match.split())
+            existed_voices = [item for sublist in voice_group_list for item in sublist]
+        if line.startswith('V:'):
+            symbol = line.split()[0]
+            part_symbol_list.append(symbol)
+            if symbol[2:] not in existed_voices:
+                voice_group_list.append([symbol[2:]])
+    z_symbol_list = []  # voices that use z as rest
+    x_symbol_list = []  # voices that use x as rest
+    for voice_group in voice_group_list:
+        z_symbol_list.append('V:' + voice_group[0])
+        for j in range(1, len(voice_group)):
+            x_symbol_list.append('V:' + voice_group[j])
+
+    part_symbol_list.sort(key=lambda x: int(x[2:]))
+
+    unreduced_tunebody_lines = []
+
+    for i, line in enumerate(tunebody_lines):
+        unreduced_line = ''
+
+        line = re.sub(r'^\[r:[^\]]*\]', '', line)
+
+        pattern = r'\[V:(\d+)\](.*?)(?=\[V:|$)'
+        matches = re.findall(pattern, line)
+
+        line_bar_dict = {}
+        for match in matches:
+            key = f'V:{match[0]}'
+            value = match[1]
+            line_bar_dict[key] = value
+
+        # calculate duration and collect barline
+        dur_dict = {}  
+        for symbol, bartext in line_bar_dict.items():
+            right_barline = ''.join(re.split(Barline_regexPattern, bartext)[-2:])
+            bartext = bartext[:-len(right_barline)]
+            try:
+                bar_dur = calculate_bartext_duration(bartext)
+            except:
+                bar_dur = None
+            if bar_dur is not None:
+                if bar_dur not in dur_dict.keys():
+                    dur_dict[bar_dur] = 1
+                else:
+                    dur_dict[bar_dur] += 1
+
+        try:
+            ref_dur = max(dur_dict, key=dur_dict.get)
+        except:
+            pass    # use last ref_dur
+
+        if i == 0:
+            prefix_left_barline = line.split('[V:')[0]
+        else:
+            prefix_left_barline = ''
+
+        for symbol in part_symbol_list:
+            if symbol in line_bar_dict.keys():
+                symbol_bartext = line_bar_dict[symbol]
+            else:
+                if symbol in z_symbol_list:
+                    symbol_bartext = prefix_left_barline + 'z' + str(ref_dur) + right_barline
+                elif symbol in x_symbol_list:
+                    symbol_bartext = prefix_left_barline + 'x' + str(ref_dur) + right_barline
+            unreduced_line += '[' + symbol + ']' + symbol_bartext
+
+        unreduced_tunebody_lines.append(unreduced_line + '\n')
+
+    unreduced_lines = metadata_lines + unreduced_tunebody_lines
+
+    return unreduced_lines
+
+
 def inference_patch(period, composer, instrumentation, initial_abc="", top_k=TOP_K, top_p=TOP_P, temperature=TEMPERATURE):
     # Add start time at the beginning
     start_time = time.time()
